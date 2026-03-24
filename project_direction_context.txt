@@ -1,0 +1,35 @@
+MyMentos — Intergenerational Conversation Facilitator
+=====================================================
+
+Theme: Creative Flourishing (Claude Hackathon)
+
+Concept
+-------
+A webpage that brings different generations of a family together and helps them have meaningful conversations. The technology disappears into the background — it's a facilitator, not a participant. The magic is between the people; the AI just keeps the fire going and preserves what emerges.
+
+Flow
+----
+1. START — Minimal landing page. One button. No friction.
+
+2. SEED QUESTION — An initial question appears on screen to kick things off.
+   Example: "What was the most significant train journey in your life?"
+
+3. LIVE CONVERSATION — Family members talk in person while the app listens
+   (mic input / transcription). The screen stays minimal — it's not the focus,
+   the people are.
+
+4. AI-PROMPTED MOMENTS — When conversation lulls, the AI surfaces a new
+   question. It picks from a curated list of approved questions but
+   contextualises them based on what it's heard — threading the conversation
+   forward, not resetting it.
+
+5. REFLECTION ("AFTER") — Once the conversation ends, a reflection experience
+   surfaces the wisdom shared — key moments, themes, quotes — so the family
+   can sit with what was exchanged. Functionality TBD.
+
+Principles
+----------
+- Minimal UI — the screen should fade into the background
+- The AI is a facilitator, never a participant
+- Questions should feel warm, human, and generative
+- The reflection phase is about preserving and honouring what was shared

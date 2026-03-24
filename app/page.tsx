@@ -4,29 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 type SessionState = "idle" | "listening" | "thinking" | "surfacing";
 
-// Web Speech API types (not in default TS lib)
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-}
-interface SpeechRecognitionInstance extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
-  onresult: ((e: SpeechRecognitionEvent) => void) | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
-}
-interface SpeechRecognitionConstructor {
-  new (): SpeechRecognitionInstance;
-}
-declare global {
-  interface Window {
-    SpeechRecognition?: SpeechRecognitionConstructor;
-    webkitSpeechRecognition?: SpeechRecognitionConstructor;
-  }
-}
+// Speech types defined in app/types/speech.d.ts
 
 const SILENCE_TIMEOUT_MS = 5000;
 const QUESTION_DISPLAY_MS = 15000;
@@ -36,6 +14,8 @@ export default function Home() {
   const [question, setQuestion] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [transcript, setTranscript] = useState<string[]>([]);
+  const [showDebug, setShowDebug] = useState(false);
+  const [interimText, setInterimText] = useState("");
 
   const silenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -107,6 +87,9 @@ export default function Home() {
       const last = results.at(-1);
       if (last?.isFinal) {
         setTranscript(prev => [...prev, last[0].transcript.trim()]);
+        setInterimText("");
+      } else if (last) {
+        setInterimText(last[0].transcript);
       }
       resetSilenceTimer();
     };
@@ -192,6 +175,31 @@ export default function Home() {
       <div className="absolute top-5 left-6 text-gray-300 text-sm font-medium tracking-widest uppercase">
         mymentos
       </div>
+
+      {/* Debug toggle */}
+      <button
+        onClick={() => setShowDebug(d => !d)}
+        className="absolute top-5 right-14 p-2 text-gray-300 hover:text-gray-500 transition-colors z-10 text-xs font-mono"
+        aria-label="Toggle debug transcript"
+      >
+        {showDebug ? "hide" : "debug"}
+      </button>
+
+      {/* Debug transcript panel */}
+      {showDebug && (
+        <div className="absolute bottom-4 left-4 right-4 max-h-48 overflow-y-auto bg-gray-50 border border-gray-200 rounded-lg p-3 z-20 text-xs font-mono text-gray-600">
+          <div className="text-gray-400 mb-1">transcript ({transcript.length} utterances)</div>
+          {transcript.length === 0 && !interimText && (
+            <span className="text-gray-300">waiting for speech...</span>
+          )}
+          {transcript.map((t, i) => (
+            <span key={i}>{t} </span>
+          ))}
+          {interimText && (
+            <span className="text-gray-400 italic">{interimText}</span>
+          )}
+        </div>
+      )}
 
       {/* Core UI */}
       <div className="flex flex-col items-center gap-12">
