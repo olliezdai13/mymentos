@@ -51,20 +51,20 @@ body {
   filter:
     drop-shadow(0 0 28px rgba(255, 165, 80, 0.22))
     drop-shadow(0 0 55px rgba(255, 115, 80, 0.1));
-  animation: orbIdleBreathe 4.5s ease-in-out infinite;
+  /* scale handled by JS render loop */
 }
 
 .orb-sphere--listening {
   filter:
-    drop-shadow(0 0 48px rgba(255, 148, 68, 0.48))
-    drop-shadow(0 0 95px rgba(255, 95, 115, 0.22));
+    drop-shadow(0 0 60px rgba(255, 148, 68, 0.60))
+    drop-shadow(0 0 120px rgba(255, 95, 115, 0.30));
 }
 
 .orb-sphere--thinking {
   filter:
     drop-shadow(0 0 42px rgba(165, 135, 255, 0.42))
     drop-shadow(0 0 85px rgba(120, 160, 255, 0.2));
-  animation: orbThinkBreathe 2.2s ease-in-out infinite;
+  /* scale + breathe handled by JS render loop */
 }
 
 .orb-sphere--surfacing {
@@ -168,13 +168,13 @@ body {
 /* ─── KEYFRAMES ───────────────────────────────────────────── */
 
 @keyframes orbIdleBreathe {
-  0%, 100% { transform: scale(0.70); }
-  50%       { transform: scale(0.76); }
+  0%, 100% { transform: scale(0.50); }
+  50%       { transform: scale(0.56); }
 }
 
 @keyframes orbThinkBreathe {
-  0%, 100% { transform: scale(0.80); }
-  50%       { transform: scale(0.86); }
+  0%, 100% { transform: scale(0.74); }
+  50%       { transform: scale(0.80); }
 }
 
 @keyframes blobDrift1 {
@@ -236,6 +236,27 @@ body {
 }
 
 @keyframes question-in {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
+  0%   { opacity: 0; transform: translateY(20px); }
+  40%  { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── COUNTDOWN ARC ──────────────────────────────────────── */
+
+.countdown-svg {
+  opacity: 0;
+  animation: countdownFadeIn 0.4s ease 0.2s forwards;
+}
+
+.countdown-progress {
+  animation: countdownDrain linear forwards;
+}
+
+@keyframes countdownFadeIn {
+  to { opacity: 1; }
+}
+
+@keyframes countdownDrain {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: 69.1; }
 }

@@ -19,12 +19,30 @@ function generateWavePath(baseR: number, n: number, amp: number, phase: number):
   return parts.join("") + "Z";
 }
 
-// Ring configs are constant — defined once at module scope
 const WAVE_RINGS = [
-  { r: 120, n: 4, speed:  0.50, phaseOff: 0.0,  dormAmp: 2.5, maxAmp: 26 },
-  { r: 148, n: 6, speed: -0.68, phaseOff: 1.05, dormAmp: 2.0, maxAmp: 20 },
-  { r: 174, n: 3, speed:  0.38, phaseOff: 2.20, dormAmp: 1.5, maxAmp: 16 },
+  { r: 136, n: 4, speed:  0.55, phaseOff: 0.0,  dormAmp: 2.8, maxAmp: 34 },
+  { r: 136, n: 7, speed: -0.72, phaseOff: 0.85, dormAmp: 2.2, maxAmp: 28 },
+  { r: 136, n: 5, speed:  0.38, phaseOff: 1.95, dormAmp: 1.8, maxAmp: 22 },
 ] as const;
+
+// Plays a soft two-tone chime using Web Audio — no audio file needed
+function playDing(ctx: AudioContext) {
+  const notes = [880, 1100];
+  notes.forEach((freq, i) => {
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    const start = ctx.currentTime + i * 0.12;
+    osc.frequency.setValueAtTime(freq, start);
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(0.18, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + 1.0);
+    osc.start(start);
+    osc.stop(start + 1.0);
+  });
+}
 
 const SILENCE_TIMEOUT_MS = 5000;
 const QUESTION_DISPLAY_MS = 15000;
@@ -36,6 +54,7 @@ export default function Home() {
   const [transcript, setTranscript] = useState<string[]>([]);
   const [showDebug, setShowDebug] = useState(false);
   const [interimText, setInterimText] = useState("");
+  const [silenceResetKey, setSilenceResetKey] = useState(0);
 
   const silenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -43,18 +62,18 @@ export default function Home() {
   const transcriptRef = useRef<string[]>([]);
 
   // Audio analysis refs
-  const audioCtxRef    = useRef<AudioContext | null>(null);
-  const animFrameRef   = useRef<number | null>(null);
-  const orbSphereRef   = useRef<HTMLDivElement | null>(null);
-  const smoothedScale  = useRef(1);
+  const audioCtxRef     = useRef<AudioContext | null>(null);
+  const animFrameRef    = useRef<number | null>(null);
+  const orbSphereRef    = useRef<HTMLDivElement | null>(null);
   const sessionStateRef = useRef<SessionState>("idle");
 
   // Wave ring refs — SVG paths updated directly in rAF loop
-  const wave1Ref     = useRef<SVGPathElement | null>(null);
-  const wave2Ref     = useRef<SVGPathElement | null>(null);
-  const wave3Ref     = useRef<SVGPathElement | null>(null);
-  const waveAnimRef  = useRef<number | null>(null);
-  const smoothedVol  = useRef(0); // 0–1, shared with wave loop
+  const wave1Ref    = useRef<SVGPathElement | null>(null);
+  const wave2Ref    = useRef<SVGPathElement | null>(null);
+  const wave3Ref    = useRef<SVGPathElement | null>(null);
+  const waveAnimRef = useRef<number | null>(null);
+  const smoothedVol = useRef(0);   // 0–1, updated by audio loop, read by render loop
+  const orbScale    = useRef(0.52); // current lerped scale, owned by render loop
 
   // Keep refs in sync
   transcriptRef.current = transcript;
@@ -78,9 +97,6 @@ export default function Home() {
   }
 
   const fetchQuestion = useCallback(async () => {
-    // Hand scale back to CSS animation
-    if (orbSphereRef.current) orbSphereRef.current.style.transform = "";
-    smoothedScale.current = 1;
     setSessionState("thinking");
     try {
       const res = await fetch("/api/facilitate", {
@@ -93,6 +109,8 @@ export default function Home() {
     } catch {
       setQuestion("What would you like to share next?");
     }
+    // Play ding just before the question appears
+    if (audioCtxRef.current) playDing(audioCtxRef.current);
     setSessionState("surfacing");
     dismissTimer.current = setTimeout(() => {
       setQuestion(null);
@@ -108,7 +126,7 @@ export default function Home() {
     }, SILENCE_TIMEOUT_MS);
   }, [fetchQuestion]);
 
-  // Volume animation loop — runs at 60fps, directly mutates DOM to avoid re-renders
+  // Audio analysis — only job is to keep smoothedVol updated
   const startVolumeLoop = useCallback((analyser: AnalyserNode) => {
     const data = new Uint8Array(analyser.frequencyBinCount);
     function tick() {
@@ -116,29 +134,40 @@ export default function Home() {
       if (sessionStateRef.current !== "listening") return;
       analyser.getByteFrequencyData(data);
       const avg = data.reduce((a, b) => a + b, 0) / data.length;
-      const target = 1 + (avg / 255) * 0.32;
-      smoothedScale.current += (target - smoothedScale.current) * 0.18;
-      smoothedVol.current   += ((avg / 255) - smoothedVol.current) * 0.18;
-      if (orbSphereRef.current) {
-        orbSphereRef.current.style.transform = `scale(${smoothedScale.current.toFixed(4)})`;
-      }
+      smoothedVol.current += ((avg / 255) - smoothedVol.current) * 0.18;
     }
     tick();
   }, []);
 
-  // Wave loop — always running, uses smoothedVol for amplitude
-  const startWaveLoop = useCallback(() => {
+  // Single render loop — handles orb scale (lerped) + wave paths. Never stops.
+  const startRenderLoop = useCallback(() => {
     const pathRefs = [wave1Ref, wave2Ref, wave3Ref];
     function tick() {
       waveAnimRef.current = requestAnimationFrame(tick);
-      const t   = performance.now() / 1000;
-      const vol = sessionStateRef.current === "listening" ? smoothedVol.current : 0;
+      const t     = performance.now() / 1000;
+      const state = sessionStateRef.current;
+      const vol   = smoothedVol.current;
 
+      // ── Orb scale: each state has a target; lerp provides smooth transitions ──
+      const breathe = (amp: number, rate: number) => amp * Math.sin(t * rate * Math.PI * 2);
+      let target: number;
+      if      (state === "idle")      target = 0.52 + breathe(0.04, 0.35);
+      else if (state === "listening") target = 1.0  + vol * 0.32;
+      else if (state === "thinking")  target = 0.74 + breathe(0.03, 0.7);
+      else                            target = 0.76; // surfacing
+
+      orbScale.current += (target - orbScale.current) * 0.055; // slow lerp = smooth
+      if (orbSphereRef.current) {
+        orbSphereRef.current.style.transform = `scale(${orbScale.current.toFixed(4)})`;
+      }
+
+      // ── Wave rings ──
+      const waveVol = state === "listening" ? vol : 0;
       for (let i = 0; i < WAVE_RINGS.length; i++) {
         const path = pathRefs[i].current;
         if (!path) continue;
         const ring  = WAVE_RINGS[i];
-        const amp   = ring.dormAmp + vol * ring.maxAmp;
+        const amp   = ring.dormAmp + waveVol * ring.maxAmp;
         const phase = t * ring.speed + ring.phaseOff;
         path.setAttribute("d", generateWavePath(ring.r, ring.n, amp, phase));
       }
@@ -146,11 +175,11 @@ export default function Home() {
     tick();
   }, []);
 
-  // Start wave loop once on mount — never stops
+  // Start render loop once on mount — never stops
   useEffect(() => {
-    startWaveLoop();
+    startRenderLoop();
     return () => { if (waveAnimRef.current) cancelAnimationFrame(waveAnimRef.current); };
-  }, [startWaveLoop]);
+  }, [startRenderLoop]);
 
   // Speech recognition + mic setup
   const startListening = useCallback(async () => {
@@ -187,6 +216,7 @@ export default function Home() {
       } else if (last) {
         setInterimText(last[0].transcript);
       }
+      setSilenceResetKey(k => k + 1);
       resetSilenceTimer();
     };
 
@@ -208,9 +238,8 @@ export default function Home() {
     }
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null; }
-    if (orbSphereRef.current) orbSphereRef.current.style.transform = "";
-    smoothedScale.current = 1;
-    smoothedVol.current   = 0;
+    smoothedVol.current = 0;
+    // orbScale lerps back to idle naturally via the render loop
     if (silenceTimer.current) clearTimeout(silenceTimer.current);
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
   }, []);
@@ -270,7 +299,7 @@ export default function Home() {
       </button>
 
       {/* Wordmark */}
-      <div className="absolute top-5 left-6 text-gray-300 text-sm font-medium tracking-widest uppercase">
+      <div className="absolute top-5 left-6 text-black text-xl font-bold tracking-tight">
         mymentos
       </div>
 
@@ -302,14 +331,14 @@ export default function Home() {
       {/* Core UI */}
       <div className="flex flex-col items-center gap-12">
         {/* Orb + sinusoidal wave rings */}
-        <div className="relative flex items-center justify-center" style={{ width: 400, height: 400 }}>
+        <div className="relative flex items-center justify-center" style={{ width: 380, height: 380 }}>
 
           {/* SVG wave rings — always rendered, amplitude driven by volume */}
           <svg
             className="absolute inset-0 pointer-events-none"
-            viewBox="-200 -200 400 400"
-            width="400"
-            height="400"
+            viewBox="-190 -190 380 380"
+            width="380"
+            height="380"
           >
             <path ref={wave1Ref} fill="none" className={`orb-wave orb-wave-1 orb-wave--${sessionState}`} />
             <path ref={wave2Ref} fill="none" className={`orb-wave orb-wave-2 orb-wave--${sessionState}`} />
@@ -326,31 +355,55 @@ export default function Home() {
             </div>
           </div>
 
+          {/* Countdown arc — right side of orb container, resets on each utterance */}
+          <div
+            className="absolute right-6 top-1/2 -translate-y-1/2"
+            style={{
+              opacity: sessionState === "listening" ? 1 : 0,
+              transition: "opacity 0.6s ease",
+            }}
+          >
+            {sessionState === "listening" && (
+              <svg key={silenceResetKey} width="24" height="24" viewBox="0 0 28 28" className="countdown-svg">
+                <circle cx="14" cy="14" r="11" fill="none" stroke="#e5e5e5" strokeWidth="1.5" />
+                <circle
+                  cx="14" cy="14" r="11"
+                  fill="none" stroke="#171717" strokeWidth="1.5"
+                  strokeDasharray="69.1" strokeDashoffset="0"
+                  strokeLinecap="round"
+                  transform="rotate(-90 14 14)"
+                  className="countdown-progress"
+                  style={{ animationDuration: `${SILENCE_TIMEOUT_MS}ms` }}
+                />
+              </svg>
+            )}
+          </div>
+
         </div>
 
-        {/* Status label */}
-        <div className="h-5 flex items-center justify-center">
-          {sessionState === "idle" && (
-            <span className="text-xs text-gray-300 tracking-widest uppercase animate-fade-in">
-              ready
+        {/* Status label — one at a time, cross-fades */}
+        <div className="relative h-5 flex items-center justify-center" style={{ minWidth: 180 }}>
+          {(["idle", "listening", "thinking"] as const).map((s) => (
+            <span
+              key={s}
+              className="absolute text-xs tracking-widest uppercase whitespace-nowrap"
+              style={{
+                opacity: sessionState === s ? 1 : 0,
+                transform: `translateY(${sessionState === s ? 0 : 5}px)`,
+                transition: "opacity 0.55s ease, transform 0.55s ease",
+                color: s === "idle" ? "#d1d5db" : "#9ca3af",
+              }}
+            >
+              {s === "idle" ? "ready" : s === "listening" ? "space to prompt" : "thinking"}
             </span>
-          )}
-          {sessionState === "listening" && (
-            <span className="text-xs text-gray-400 tracking-widest uppercase animate-fade-in">
-              listening · space to prompt
-            </span>
-          )}
-          {sessionState === "thinking" && (
-            <span className="text-xs text-gray-400 tracking-widest uppercase animate-fade-in">
-              thinking
-            </span>
-          )}
+          ))}
         </div>
 
         {/* Question card */}
         {sessionState === "surfacing" && question && (
           <div
-            className="animate-question-in max-w-sm text-center cursor-pointer"
+            className="max-w-sm text-center cursor-pointer"
+            style={{ animation: "question-in 1.6s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both" }}
             onClick={() => {
               if (dismissTimer.current) clearTimeout(dismissTimer.current);
               setQuestion(null);
@@ -367,24 +420,33 @@ export default function Home() {
           </div>
         )}
 
-        {/* CTA */}
-        {sessionState === "idle" && (
+        {/* CTA buttons — always rendered, fade in/out via opacity */}
+        <div className="h-12 flex items-center justify-center">
           <button
             onClick={handleStart}
-            className="animate-fade-in px-8 py-3 bg-black text-white rounded-full text-sm font-medium tracking-wide hover:bg-gray-800 active:scale-95 transition-all"
+            className="px-8 py-3 bg-black text-white rounded-full text-sm font-medium tracking-wide hover:bg-gray-800 active:scale-95 transition-all duration-300 absolute"
+            style={{
+              opacity: sessionState === "idle" ? 1 : 0,
+              pointerEvents: sessionState === "idle" ? "auto" : "none",
+              transform: `scale(${sessionState === "idle" ? 1 : 0.95})`,
+              transition: "opacity 0.5s ease, transform 0.5s ease",
+            }}
           >
             Begin conversation
           </button>
-        )}
-
-        {sessionState === "listening" && (
           <button
             onClick={handleEnd}
-            className="animate-fade-in px-6 py-2.5 border border-gray-200 text-gray-400 rounded-full text-xs font-medium tracking-widest uppercase hover:border-gray-400 hover:text-gray-600 active:scale-95 transition-all"
+            className="px-6 py-2.5 border border-gray-200 text-gray-400 rounded-full text-xs font-medium tracking-widest uppercase hover:border-gray-400 hover:text-gray-600 active:scale-95 absolute"
+            style={{
+              opacity: sessionState === "listening" ? 1 : 0,
+              pointerEvents: sessionState === "listening" ? "auto" : "none",
+              transform: `scale(${sessionState === "listening" ? 1 : 0.95})`,
+              transition: "opacity 0.5s ease, transform 0.5s ease",
+            }}
           >
             End
           </button>
-        )}
+        </div>
       </div>
     </div>
   );
