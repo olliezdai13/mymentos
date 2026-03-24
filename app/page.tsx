@@ -6,6 +6,26 @@ type SessionState = "idle" | "listening" | "thinking" | "surfacing";
 
 // Speech types defined in app/types/speech.d.ts
 
+function generateWavePath(baseR: number, n: number, amp: number, phase: number): string {
+  const pts = 240;
+  const parts: string[] = new Array(pts + 1);
+  for (let i = 0; i <= pts; i++) {
+    const θ = (i / pts) * Math.PI * 2;
+    const r = baseR + amp * Math.sin(n * θ + phase);
+    const x = (r * Math.cos(θ)).toFixed(2);
+    const y = (r * Math.sin(θ)).toFixed(2);
+    parts[i] = i === 0 ? `M${x},${y}` : `L${x},${y}`;
+  }
+  return parts.join("") + "Z";
+}
+
+// Ring configs are constant — defined once at module scope
+const WAVE_RINGS = [
+  { r: 120, n: 4, speed:  0.50, phaseOff: 0.0,  dormAmp: 2.5, maxAmp: 26 },
+  { r: 148, n: 6, speed: -0.68, phaseOff: 1.05, dormAmp: 2.0, maxAmp: 20 },
+  { r: 174, n: 3, speed:  0.38, phaseOff: 2.20, dormAmp: 1.5, maxAmp: 16 },
+] as const;
+
 const SILENCE_TIMEOUT_MS = 5000;
 const QUESTION_DISPLAY_MS = 15000;
 
@@ -22,8 +42,23 @@ export default function Home() {
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const transcriptRef = useRef<string[]>([]);
 
-  // Keep ref in sync
+  // Audio analysis refs
+  const audioCtxRef    = useRef<AudioContext | null>(null);
+  const animFrameRef   = useRef<number | null>(null);
+  const orbSphereRef   = useRef<HTMLDivElement | null>(null);
+  const smoothedScale  = useRef(1);
+  const sessionStateRef = useRef<SessionState>("idle");
+
+  // Wave ring refs — SVG paths updated directly in rAF loop
+  const wave1Ref     = useRef<SVGPathElement | null>(null);
+  const wave2Ref     = useRef<SVGPathElement | null>(null);
+  const wave3Ref     = useRef<SVGPathElement | null>(null);
+  const waveAnimRef  = useRef<number | null>(null);
+  const smoothedVol  = useRef(0); // 0–1, shared with wave loop
+
+  // Keep refs in sync
   transcriptRef.current = transcript;
+  sessionStateRef.current = sessionState;
 
   // Fullscreen
   useEffect(() => {
@@ -43,6 +78,9 @@ export default function Home() {
   }
 
   const fetchQuestion = useCallback(async () => {
+    // Hand scale back to CSS animation
+    if (orbSphereRef.current) orbSphereRef.current.style.transform = "";
+    smoothedScale.current = 1;
     setSessionState("thinking");
     try {
       const res = await fetch("/api/facilitate", {
@@ -70,11 +108,69 @@ export default function Home() {
     }, SILENCE_TIMEOUT_MS);
   }, [fetchQuestion]);
 
-  // Speech recognition setup
-  const startListening = useCallback(() => {
+  // Volume animation loop — runs at 60fps, directly mutates DOM to avoid re-renders
+  const startVolumeLoop = useCallback((analyser: AnalyserNode) => {
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    function tick() {
+      animFrameRef.current = requestAnimationFrame(tick);
+      if (sessionStateRef.current !== "listening") return;
+      analyser.getByteFrequencyData(data);
+      const avg = data.reduce((a, b) => a + b, 0) / data.length;
+      const target = 1 + (avg / 255) * 0.32;
+      smoothedScale.current += (target - smoothedScale.current) * 0.18;
+      smoothedVol.current   += ((avg / 255) - smoothedVol.current) * 0.18;
+      if (orbSphereRef.current) {
+        orbSphereRef.current.style.transform = `scale(${smoothedScale.current.toFixed(4)})`;
+      }
+    }
+    tick();
+  }, []);
+
+  // Wave loop — always running, uses smoothedVol for amplitude
+  const startWaveLoop = useCallback(() => {
+    const pathRefs = [wave1Ref, wave2Ref, wave3Ref];
+    function tick() {
+      waveAnimRef.current = requestAnimationFrame(tick);
+      const t   = performance.now() / 1000;
+      const vol = sessionStateRef.current === "listening" ? smoothedVol.current : 0;
+
+      for (let i = 0; i < WAVE_RINGS.length; i++) {
+        const path = pathRefs[i].current;
+        if (!path) continue;
+        const ring  = WAVE_RINGS[i];
+        const amp   = ring.dormAmp + vol * ring.maxAmp;
+        const phase = t * ring.speed + ring.phaseOff;
+        path.setAttribute("d", generateWavePath(ring.r, ring.n, amp, phase));
+      }
+    }
+    tick();
+  }, []);
+
+  // Start wave loop once on mount — never stops
+  useEffect(() => {
+    startWaveLoop();
+    return () => { if (waveAnimRef.current) cancelAnimationFrame(waveAnimRef.current); };
+  }, [startWaveLoop]);
+
+  // Speech recognition + mic setup
+  const startListening = useCallback(async () => {
+    // — Microphone / Web Audio —
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const ctx = new AudioContext();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.75;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      audioCtxRef.current = ctx;
+      startVolumeLoop(analyser);
+    } catch {
+      // mic permission denied — orb still works, just won't react to volume
+    }
+
+    // — Speech recognition —
     const Ctor: SpeechRecognitionConstructor | undefined =
       window.SpeechRecognition || window.webkitSpeechRecognition;
-
     if (!Ctor) return;
 
     const recognition = new Ctor();
@@ -96,16 +192,13 @@ export default function Home() {
 
     recognition.onerror = () => {};
     recognition.onend = () => {
-      // Auto-restart if still in listening/surfacing state
-      if (recognitionRef.current) {
-        recognition.start();
-      }
+      if (recognitionRef.current) recognition.start();
     };
 
     recognition.start();
     recognitionRef.current = recognition;
     resetSilenceTimer();
-  }, [resetSilenceTimer]);
+  }, [resetSilenceTimer, startVolumeLoop]);
 
   const stopListening = useCallback(() => {
     if (recognitionRef.current) {
@@ -113,6 +206,11 @@ export default function Home() {
       recognitionRef.current.stop();
       recognitionRef.current = null;
     }
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null; }
+    if (orbSphereRef.current) orbSphereRef.current.style.transform = "";
+    smoothedScale.current = 1;
+    smoothedVol.current   = 0;
     if (silenceTimer.current) clearTimeout(silenceTimer.current);
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
   }, []);
@@ -203,36 +301,31 @@ export default function Home() {
 
       {/* Core UI */}
       <div className="flex flex-col items-center gap-12">
-        {/* Orb */}
-        <div className="relative flex items-center justify-center w-32 h-32">
-          {/* Ripple rings — only when listening */}
-          {sessionState === "listening" && (
-            <>
-              <span className="absolute inset-0 rounded-full bg-black/5 animate-ripple" />
-              <span className="absolute inset-0 rounded-full bg-black/5 animate-ripple [animation-delay:0.6s]" />
-              <span className="absolute inset-0 rounded-full bg-black/5 animate-ripple [animation-delay:1.2s]" />
-            </>
-          )}
+        {/* Orb + sinusoidal wave rings */}
+        <div className="relative flex items-center justify-center" style={{ width: 400, height: 400 }}>
 
-          {/* Thinking ring */}
-          {sessionState === "thinking" && (
-            <span className="absolute inset-0 rounded-full border border-gray-200 animate-spin-slow" />
-          )}
+          {/* SVG wave rings — always rendered, amplitude driven by volume */}
+          <svg
+            className="absolute inset-0 pointer-events-none"
+            viewBox="-200 -200 400 400"
+            width="400"
+            height="400"
+          >
+            <path ref={wave1Ref} fill="none" className={`orb-wave orb-wave-1 orb-wave--${sessionState}`} />
+            <path ref={wave2Ref} fill="none" className={`orb-wave orb-wave-2 orb-wave--${sessionState}`} />
+            <path ref={wave3Ref} fill="none" className={`orb-wave orb-wave-3 orb-wave--${sessionState}`} />
+          </svg>
 
-          {/* Core circle */}
-          <div
-            className={`
-              rounded-full transition-all duration-700 ease-in-out
-              ${sessionState === "idle"
-                ? "w-14 h-14 bg-gray-100 animate-idle-pulse"
-                : sessionState === "listening"
-                ? "w-20 h-20 bg-black"
-                : sessionState === "thinking"
-                ? "w-16 h-16 bg-gray-400 animate-idle-pulse"
-                : "w-14 h-14 bg-gray-200"
-              }
-            `}
-          />
+          {/* Orb sphere */}
+          <div className="orb-wrapper">
+            <div ref={orbSphereRef} className={`orb-sphere orb-sphere--${sessionState}`}>
+              <div className={`orb-blob orb-warm${sessionState === "thinking" ? " orb-warm--thinking" : ""}`} />
+              <div className={`orb-blob orb-pink${sessionState === "thinking" ? " orb-pink--thinking" : ""}`} />
+              <div className="orb-blob orb-center" />
+              <div className="orb-sheen" />
+            </div>
+          </div>
+
         </div>
 
         {/* Status label */}
