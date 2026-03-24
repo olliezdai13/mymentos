@@ -19,10 +19,11 @@ function generateWavePath(baseR: number, n: number, amp: number, phase: number):
   return parts.join("") + "Z";
 }
 
+// offset = distance from orb edge; orbRadius is computed per-frame from current scale
 const WAVE_RINGS = [
-  { r: 136, n: 4, speed:  0.55, phaseOff: 0.0,  dormAmp: 2.8, maxAmp: 34 },
-  { r: 136, n: 7, speed: -0.72, phaseOff: 0.85, dormAmp: 2.2, maxAmp: 28 },
-  { r: 136, n: 5, speed:  0.38, phaseOff: 1.95, dormAmp: 1.8, maxAmp: 22 },
+  { offset: 26, n: 4, speed:  0.55, phaseOff: 0.0,  dormAmp: 2.8, maxAmp: 34 },
+  { offset: 26, n: 7, speed: -0.72, phaseOff: 0.85, dormAmp: 2.2, maxAmp: 28 },
+  { offset: 26, n: 5, speed:  0.38, phaseOff: 1.95, dormAmp: 1.8, maxAmp: 22 },
 ] as const;
 
 // Plays a soft two-tone chime using Web Audio — no audio file needed
@@ -161,7 +162,8 @@ export default function Home() {
         orbSphereRef.current.style.transform = `scale(${orbScale.current.toFixed(4)})`;
       }
 
-      // ── Wave rings ──
+      // ── Wave rings — radius tracks orb size ──
+      const orbRadius = 110 * orbScale.current; // orb sphere is 220px → radius 110
       const waveVol = state === "listening" ? vol : 0;
       for (let i = 0; i < WAVE_RINGS.length; i++) {
         const path = pathRefs[i].current;
@@ -169,7 +171,7 @@ export default function Home() {
         const ring  = WAVE_RINGS[i];
         const amp   = ring.dormAmp + waveVol * ring.maxAmp;
         const phase = t * ring.speed + ring.phaseOff;
-        path.setAttribute("d", generateWavePath(ring.r, ring.n, amp, phase));
+        path.setAttribute("d", generateWavePath(orbRadius + ring.offset, ring.n, amp, phase));
       }
     }
     tick();
@@ -340,14 +342,14 @@ export default function Home() {
         }}
       >
         {/* Orb + sinusoidal wave rings */}
-        <div className="relative flex items-center justify-center" style={{ width: 380, height: 380 }}>
+        <div className="relative flex items-center justify-center" style={{ width: 440, height: 440 }}>
 
           {/* SVG wave rings — always rendered, amplitude driven by volume */}
           <svg
             className="absolute inset-0 pointer-events-none"
-            viewBox="-190 -190 380 380"
-            width="380"
-            height="380"
+            viewBox="-220 -220 440 440"
+            width="440"
+            height="440"
           >
             <path ref={wave1Ref} fill="none" className={`orb-wave orb-wave-1 orb-wave--${sessionState}`} />
             <path ref={wave2Ref} fill="none" className={`orb-wave orb-wave-2 orb-wave--${sessionState}`} />
@@ -416,7 +418,7 @@ export default function Home() {
         <div className="h-12 flex items-center justify-center">
           <button
             onClick={handleStart}
-            className="px-8 py-3 bg-black text-white rounded-full text-sm font-medium tracking-wide hover:bg-gray-800 active:scale-95 transition-all duration-300 absolute"
+            className="btn-sand px-8 py-3 rounded-full text-sm font-medium tracking-wide active:scale-95 absolute"
             style={{
               opacity: sessionState === "idle" ? 1 : 0,
               pointerEvents: sessionState === "idle" ? "auto" : "none",

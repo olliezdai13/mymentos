@@ -241,6 +241,44 @@ body {
   100% { opacity: 1; transform: translateY(0); }
 }
 
+/* ─── SAND BUTTON ────────────────────────────────────────── */
+
+.btn-sand {
+  position: relative;
+  overflow: hidden;
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  color: #171717;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  transition: color 0.5s ease, border-color 0.5s ease;
+  z-index: 0;
+}
+
+.btn-sand::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  margin-top: -5px;
+  background: #171717;
+  border-radius: 50%;
+  transform: scale(0);
+  transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: -1;
+}
+
+.btn-sand:hover::after {
+  transform: scale(50);
+}
+
+.btn-sand:hover {
+  color: white;
+  border-color: transparent;
+}
+
 /* ─── COUNTDOWN ARC ──────────────────────────────────────── */
 
 .countdown-svg {
