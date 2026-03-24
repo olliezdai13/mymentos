@@ -299,7 +299,10 @@ export default function Home() {
       </button>
 
       {/* Wordmark */}
-      <div className="absolute top-5 left-6 text-black text-xl font-bold tracking-tight">
+      <div
+        className="absolute top-5 left-6 text-black text-2xl tracking-tight"
+        style={{ fontFamily: "var(--font-playfair)", fontStyle: "italic", fontWeight: 500 }}
+      >
         mymentos
       </div>
 
@@ -328,8 +331,14 @@ export default function Home() {
         </div>
       )}
 
-      {/* Core UI */}
-      <div className="flex flex-col items-center gap-12">
+      {/* Core UI — slides up when surfacing */}
+      <div
+        className="flex flex-col items-center gap-12"
+        style={{
+          transform: `translateY(${sessionState === "surfacing" ? "-9vh" : "0"})`,
+          transition: "transform 1.2s cubic-bezier(0.22, 1, 0.36, 1)",
+        }}
+      >
         {/* Orb + sinusoidal wave rings */}
         <div className="relative flex items-center justify-center" style={{ width: 380, height: 380 }}>
 
@@ -355,20 +364,21 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Countdown arc — right side of orb container, resets on each utterance */}
+          {/* Countdown arc — outside the orb container to the right */}
           <div
-            className="absolute right-6 top-1/2 -translate-y-1/2"
+            className="absolute top-1/2 -translate-y-1/2"
             style={{
-              opacity: sessionState === "listening" ? 1 : 0,
-              transition: "opacity 0.6s ease",
+              right: "-48px",
+              opacity: sessionState === "listening" ? 0.45 : 0,
+              transition: "opacity 0.8s ease",
             }}
           >
             {sessionState === "listening" && (
-              <svg key={silenceResetKey} width="24" height="24" viewBox="0 0 28 28" className="countdown-svg">
-                <circle cx="14" cy="14" r="11" fill="none" stroke="#e5e5e5" strokeWidth="1.5" />
+              <svg key={silenceResetKey} width="22" height="22" viewBox="0 0 28 28" className="countdown-svg">
+                <circle cx="14" cy="14" r="11" fill="none" stroke="rgba(180,180,180,0.35)" strokeWidth="1.2" />
                 <circle
                   cx="14" cy="14" r="11"
-                  fill="none" stroke="#171717" strokeWidth="1.5"
+                  fill="none" stroke="rgba(140,140,140,0.7)" strokeWidth="1.2"
                   strokeDasharray="69.1" strokeDashoffset="0"
                   strokeLinecap="round"
                   transform="rotate(-90 14 14)"
@@ -399,26 +409,8 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Question card */}
-        {sessionState === "surfacing" && question && (
-          <div
-            className="max-w-sm text-center cursor-pointer"
-            style={{ animation: "question-in 1.6s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both" }}
-            onClick={() => {
-              if (dismissTimer.current) clearTimeout(dismissTimer.current);
-              setQuestion(null);
-              setSessionState("listening");
-              resetSilenceTimer();
-            }}
-          >
-            <p className="text-gray-800 text-lg font-light leading-relaxed tracking-wide">
-              {question}
-            </p>
-            <span className="mt-4 block text-xs text-gray-300 tracking-widest uppercase">
-              tap to continue
-            </span>
-          </div>
-        )}
+        {/* placeholder keeps button from shifting when question is absent */}
+        <div className="h-0" />
 
         {/* CTA buttons — always rendered, fade in/out via opacity */}
         <div className="h-12 flex items-center justify-center">
@@ -448,6 +440,32 @@ export default function Home() {
           </button>
         </div>
       </div>
+
+      {/* Question card — fixed so it never touches the flex layout */}
+      {sessionState === "surfacing" && question && (
+        <div
+          className="fixed inset-x-0 flex justify-center px-8 pointer-events-none"
+          style={{ top: "62%" }}
+        >
+          <div
+            className="pointer-events-auto max-w-sm text-center cursor-pointer"
+            style={{ animation: "question-in 1.6s cubic-bezier(0.22, 1, 0.36, 1) 0.25s both" }}
+            onClick={() => {
+              if (dismissTimer.current) clearTimeout(dismissTimer.current);
+              setQuestion(null);
+              setSessionState("listening");
+              resetSilenceTimer();
+            }}
+          >
+            <p className="text-gray-800 text-lg font-light leading-relaxed tracking-wide">
+              {question}
+            </p>
+            <span className="mt-5 block text-xs text-gray-300 tracking-widest uppercase">
+              tap to continue
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
